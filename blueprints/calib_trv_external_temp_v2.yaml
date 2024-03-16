@@ -1,0 +1,110 @@
+blueprint:
+  name: Calibrate TRV external temperature V2
+  description: Calibrate Moest BRT-100 TRV internal temperature according to external temperature sensor with decimal approximation
+  domain: automation
+  input:
+    external_temp:
+      name: Select the external temp sensor
+      description: This will be your external temp sensor.
+      selector:
+        entity:
+          domain:
+          - sensor
+          device_class:
+          - temperature
+          multiple: false
+    climate_names:
+      name: Climate entries
+      description: This will be the MOES TRVs that will be calibrated using the external sensor.
+      selector:
+        entity:
+          domain:
+          - climate
+          multiple: true
+    target_decimal_offset:
+      name: Number helper entity defining target temperature decimal offset
+      selector:
+        entity:
+          filter:
+            domain: input_number
+
+    offset_factor:
+      name: Calibration Offset Factor
+      description: |
+        Adds weighted diff in actual and target temperature.
+        will add following formula to calibration: offset_factor * (actual_temp - target_temp)
+        0 = no offset
+      selector:
+        number:
+          min: 0
+          max: 2
+          step: 0.1
+  source_url: https://github.com/LukasVyhlidka/HAMoesTrvAutomations/blob/main/blueprints/calib_trv_external_temp_v2.yaml
+alias: Calibrate Moes TRVs
+description: ''
+variables:
+  climate_names: !input climate_names
+  external_temperature: !input external_temp
+  target_decimal_offset: !input target_decimal_offset
+  offset_factor: !input offset_factor
+trigger:
+- platform: state
+  entity_id: !input external_temp
+  for:
+    hours: 0
+    minutes: 0
+    seconds: 15
+    milliseconds: 0
+- platform: state
+  entity_id: !input climate_names
+  for:
+    hours: 0
+    minutes: 0
+    seconds: 15
+    milliseconds: 0
+- platform: state
+  entity_id: !input target_decimal_offset
+  for:
+    hours: 0
+    minutes: 0
+    seconds: 15
+    milliseconds: 0
+condition:
+  condition: and
+  conditions:
+  - condition: template
+    value_template: '{{ states(external_temperature) != ''unavailable'' }}'
+  - condition: template
+    value_template: '{{ states(external_temperature) != ''unknown'' }}'
+action:
+- repeat:
+    for_each: "{{ climate_names }}"
+    sequence:
+    - variables:
+        climate_name: "{{ repeat.item }}"
+        device_calib: "number.{{ climate_name.removeprefix('climate.') }}_local_temperature_calibration"
+        external_temp: "{{ states(external_temperature) | float() }}"
+        local_temp: "{{ state_attr(climate_name, 'current_temperature') | float() }}"
+        target_temp_decimal: "{{ states(target_decimal_offset) | float() }}"
+        target_temp: "{{ target_temp_decimal + state_attr(climate_name, 'temperature') | float() }}"
+        actual_calib: "{{ states(device_calib) | float() }}"
+        temp_diff: "{{ external_temp - target_temp }}"
+        calibration_offset: "{{ temp_diff * offset_factor }}"
+        target_calib: "{{ external_temp - (local_temp - actual_calib) + calibration_offset }}"
+        target_calib_round: "{{ target_calib | round() }}"
+        target_calib_trunc: "{{ [ ([target_calib_round, 9] | min), -9 ] | max }}"
+
+    - alias: "check if calibration needs change"
+      condition: template
+      value_template: "{{ (actual_calib | round()) != target_calib_trunc }}"
+      
+    - service: number.set_value
+      target:
+        entity_id: "{{ device_calib }}"
+      data:
+        value: "{{ target_calib_trunc }}"
+
+- delay: 5
+mode: single
+max_exceeded: silent
+

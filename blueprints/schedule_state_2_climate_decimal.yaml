@@ -1,0 +1,69 @@
+blueprint:
+  name: Schedule State to Climate and Decimal Offset
+  description: |
+    When ScheduleState changes, it reflects the state to climate target temperature and decimal numeric offset
+    that is then used by calib_trv_external_temp_v2.yaml
+  domain: automation
+  input:
+    schedule_state:
+      name: Select the ScheduleState
+      description: ScheduleState to use to set desired climate temperature
+      selector:
+        entity:
+          domain:
+          - sensor
+    climate_names:
+      name: Climate entries
+      description: Set of Climate Devices to set the target temperature (integer part) to
+      selector:
+        entity:
+          domain:
+          - climate
+          multiple: true
+    target_decimal_offset:
+      name: Number helper entity to set the target temperature (decimal part) to
+      selector:
+        entity:
+          filter:
+            domain: input_number
+  source_url: https://github.com/LukasVyhlidka/HAMoesTrvAutomations/blob/main/blueprints/schedule_state_2_climate_decimal.yaml
+alias: Set Schedule State to Climate
+description: ''
+variables:
+  schedule_state: !input schedule_state
+  climate_names: !input climate_names
+  target_decimal_offset: !input target_decimal_offset
+trigger:
+- platform: state
+  entity_id: !input schedule_state
+action:
+- repeat:
+    for_each: "{{ climate_names }}"
+    sequence:
+    - variables:
+        climate_name: "{{ repeat.item }}"
+        target_temp: "{{ states(schedule_state) | float() }}"
+        target_temp_int: "{{ target_temp | int }}"
+        target_temp_dec: "{{ (target_temp - target_temp_int) | float() | round(1) }}"
+
+    - service: climate.set_temperature
+      data:
+        temperature: "{{ target_temp_int }}"
+      target:
+        entity_id: "{{ climate_name }}"
+    - service: climate.set_preset_mode
+      target:
+        entity_id: "{{ climate_name }}"
+      data:
+        preset_mode: manual
+      
+    - service: input_number.set_value
+      target:
+        entity_id: "{{ target_decimal_offset }}"
+      data:
+        value: "{{ target_temp_dec }}"
+- delay: 3
+
+mode: single
+max_exceeded: silent
+
